@@ -2,6 +2,8 @@
 
 > Content-addressed execution store for AI agents — git semantics for agent tool calls.
 
+[![CI](https://github.com/AVIDS2/vek/actions/workflows/ci.yml/badge.svg)](https://github.com/AVIDS2/vek/actions/workflows/ci.yml)
+
 Vek is a minimal execution history layer for AI agents. Every tool call's input and output is stored as an immutable, content-addressed blob, forming a traceable, forkable, replayable execution DAG. Framework-agnostic — plug in with a single function call.
 
 ## Philosophy
@@ -20,28 +22,74 @@ pip install vek
 ```python
 import vek
 
-# initialise a .vek repository in the current directory
 vek.init()
 
 # record a single tool call
 h = vek.store(tool="search", input={"q": "climate change"}, output={"results": [...]})
 
-# session — auto-chained recording
+# session — auto-chained, atomic recording
 with vek.session() as s:
     s.store(tool="search", input=query, output=results)
     s.store(tool="summarise", input=text, output=summary)
+
+# auto-record with decorator
+@vek.wrap
+def search(query: str) -> dict:
+    return {"results": [...]}
+
+# inspect
+node = vek.show(h)
+blob = vek.cat_file(node["input_hash"])
 ```
 
 ## CLI
 
 ```
 vek init                  # create .vek/ repository
-vek log                   # show execution history
-vek branch [name]         # list or create branches
+vek status                # current branch, tip, stats
+vek log [-n 20] [--graph] # execution history / ASCII DAG
+vek show <hash>           # inspect a node (short hash OK)
+vek cat-file <hash>       # dump raw object content
+vek branch [name]         # list or create/switch branches
 vek fork <hash>           # fork at a node
-vek diff <hash1> <hash2>  # compare two nodes
+vek merge <branch>        # merge branch into current
+vek diff <hash1> <hash2>  # structural JSON diff
 vek replay <hash>         # replay execution chain
+vek tag [name] [hash]     # list or create tags
+vek fsck                  # verify repository integrity
+vek gc [--dry-run]        # remove unreachable objects
+vek export [--format json|jsonl] [--branch name]
+vek import <file> [--format auto|json|jsonl]
+vek --version
 ```
+
+## Python API
+
+| Function | Description |
+|----------|-------------|
+| `vek.init()` | Initialise `.vek/` repository |
+| `vek.store(tool, input, output)` | Record one tool call |
+| `vek.session()` | Context manager for atomic batch recording |
+| `vek.async_session()` | Async context manager |
+| `vek.wrap(fn)` | Decorator for auto-recording |
+| `vek.hook(dispatch_fn)` | Wrap a dispatch function |
+| `vek.log(n=20)` | Recent execution history |
+| `vek.log_graph()` | ASCII DAG visualisation |
+| `vek.show(hash)` | Node details with materialised content |
+| `vek.cat_file(hash)` | Raw object bytes |
+| `vek.status()` | Repository summary |
+| `vek.branch(name)` | Create/switch branch |
+| `vek.fork(hash, name)` | Fork at a node |
+| `vek.merge(branch)` | Merge branch (creates multi-parent node) |
+| `vek.diff(h1, h2)` | Structural JSON diff |
+| `vek.replay(hash)` | Full chain from root to hash |
+| `vek.tag(name, hash)` | Lightweight tags |
+| `vek.fsck()` | Integrity verification |
+| `vek.gc()` | Garbage collection |
+| `vek.export()` | Export chains (JSON/JSONL) |
+| `vek.import_data(data)` | Import chains |
+
+All hash arguments accept short prefixes (e.g. `h[:8]`).
 
 ## Storage Layout
 
@@ -57,19 +105,29 @@ vek replay <hash>         # replay execution chain
 ## Data Model
 
 ```
-objects:  hash | content                                         (content-addressed blobs)
-nodes:    hash | tool | input_hash | output_hash | parent_hash | timestamp  (execution DAG)
-refs:     name | hash                                            (branch pointers)
+objects:  hash | content
+nodes:    hash | tool | input_hash | output_hash | parent_hash | timestamp | merge_parent
+refs:     name | hash                     (branches, tags with "tag/" prefix)
 ```
 
 ### Object Hashing (git-style)
 
 ```
-object_id = SHA-256( "blob" + " " + size + "\0" + content )   # for input/output blobs
-object_id = SHA-256( "node" + " " + size + "\0" + content )   # for execution nodes
+SHA-256( "blob" + " " + size + "\0" + content )   # input/output blobs
+SHA-256( "node" + " " + size + "\0" + content )   # execution nodes
 ```
 
-Same content is stored exactly once. Different object types with identical content produce different hashes.
+Same content stored exactly once. Different types with identical content produce different hashes.
+
+### Merge Nodes
+
+Merge creates a node with two parents: `parent_hash` (current branch) and `merge_parent` (target branch). Tool is `__merge__`.
+
+## Concurrency
+
+- SQLite WAL mode with 5s busy timeout
+- Advisory file lock (`HEAD.lock`) prevents concurrent branch pointer writes
+- Sessions batch all writes in a single transaction (atomic commit/rollback)
 
 ## Design Principles
 
@@ -78,6 +136,8 @@ Same content is stored exactly once. Different object types with identical conte
 - **Framework-agnostic** — no adapters, no shims
 - **Local-first** — `.vek/` directory, zero external dependencies
 - **Minimal API** — one function call to integrate
+- **Atomic sessions** — all-or-nothing batch writes
+- **Portable** — export/import execution chains as JSON/JSONL
 
 ## License
 
