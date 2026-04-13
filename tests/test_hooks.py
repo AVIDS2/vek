@@ -3,8 +3,12 @@
 import asyncio
 import os
 import tempfile
+from unittest.mock import patch
+
+import pytest
 
 import vek
+from vek.db import DB
 from vek import api
 from vek.hooks import wrap, hook
 
@@ -126,3 +130,29 @@ class TestAsyncSession:
         # No unreachable garbage
         result = vek.gc(dry_run=True)
         assert result["unreachable_nodes"] == []
+
+    def test_async_session_releases_lock_on_init_failure(self):
+        """HEAD.lock must not leak if __aenter__ fails after lock acquisition."""
+        from pathlib import Path
+        from vek.repo import find
+
+        vd = find()
+        lock_path = vd / "HEAD.lock"
+
+        def exploding_begin(*a, **kw):
+            raise RuntimeError("simulated init failure")
+
+        async def run():
+            with patch.object(DB, "begin_immediate", exploding_begin):
+                with pytest.raises(RuntimeError, match="simulated init failure"):
+                    async with vek.async_session() as s:
+                        pass  # should never reach here
+
+        asyncio.run(run())
+        assert not lock_path.exists(), "HEAD.lock leaked after __aenter__ failure"
+        # Subsequent session should succeed without stale-lock error
+        async def run_ok():
+            async with vek.async_session() as s:
+                s.store(tool="after_fail", input="x", output="y")
+                return s.count
+        assert asyncio.run(run_ok()) == 1

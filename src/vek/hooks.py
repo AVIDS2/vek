@@ -128,10 +128,16 @@ class AsyncSession:
                 if attempt == 49:
                     raise
                 await asyncio.sleep(0.1)
-        self._db.begin_immediate()
-        self._db._autocommit = False
-        branch = read_head(self._vd)
-        self._tip = self._db.get_ref(branch)
+        try:
+            self._db.begin_immediate()
+            self._db._autocommit = False
+            branch = read_head(self._vd)
+            self._tip = self._db.get_ref(branch)
+        except Exception:
+            await loop.run_in_executor(
+                None, self._lock.__exit__, None, None, None
+            )
+            raise
         return self
 
     async def __aexit__(self, exc_type: type | None, *exc: object) -> bool:
