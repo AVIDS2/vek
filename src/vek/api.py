@@ -94,6 +94,7 @@ def store(
     # --- atomic ref update: BEGIN IMMEDIATE prevents concurrent race ---
     if own_db:
         db.begin_immediate()
+        db._autocommit = False  # suppress intermediate commits
     try:
         db.put_object(in_hash, in_blob)
         db.put_object(out_hash, out_blob)
@@ -127,6 +128,9 @@ def store(
         if own_db:
             db.rollback()
         raise
+    finally:
+        if own_db:
+            db._autocommit = True
 
     if own_db:
         db.close()
@@ -217,8 +221,12 @@ def diff(hash1: str, hash2: str) -> dict:
 
 
 def replay(node_hash: str) -> list[dict]:
-    """Return the linear execution chain from root to *node_hash*,
-    with input/output content materialised inline."""
+    """Return the first-parent chain from root to *node_hash*,
+    with input/output content materialised inline.
+
+    Only follows ``parent_hash`` links (like ``git log --first-parent``).
+    To replay a merged branch, call ``replay()`` on its tip directly.
+    """
     vd, db = _open()
     node_hash = _resolve(db, node_hash)
     chain = db.walk_linear(node_hash)

@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/AVIDS2/vek/actions/workflows/ci.yml/badge.svg)](https://github.com/AVIDS2/vek/actions/workflows/ci.yml)
 
-Vek is a minimal execution history layer for AI agents. Every tool call's input and output is stored as an immutable, content-addressed blob, forming a traceable, forkable, replayable execution DAG. Framework-agnostic — plug in with a single function call.
+Vek is a minimal execution history layer for AI agents. Every tool call's input and output is stored as an immutable, content-addressed blob, forming a traceable, forkable, branchable execution DAG. Framework-agnostic — plug in with a single function call.
 
 ## Philosophy
 
@@ -54,7 +54,7 @@ vek branch [name]         # list or create/switch branches
 vek fork <hash>           # fork at a node
 vek merge <branch>        # merge branch into current
 vek diff <hash1> <hash2>  # structural JSON diff
-vek replay <hash>         # replay execution chain
+vek replay <hash>         # replay first-parent chain
 vek tag [name] [hash]     # list or create tags
 vek fsck                  # verify repository integrity
 vek gc [--dry-run]        # remove unreachable objects
@@ -82,7 +82,7 @@ vek --version
 | `vek.fork(hash, name)` | Fork at a node |
 | `vek.merge(branch)` | Merge branch (creates multi-parent node) |
 | `vek.diff(h1, h2)` | Structural JSON diff |
-| `vek.replay(hash)` | Full chain from root to hash |
+| `vek.replay(hash)` | First-parent chain from root to hash |
 | `vek.tag(name, hash)` | Lightweight tags |
 | `vek.fsck()` | Integrity verification |
 | `vek.gc()` | Garbage collection |
@@ -126,6 +126,7 @@ Merge creates a node with two parents: `parent_hash` (current branch) and `merge
 ## Concurrency
 
 - SQLite WAL mode with 5s busy timeout
+- `store()` uses `BEGIN IMMEDIATE` to serialise concurrent ref updates
 - Advisory file lock (`HEAD.lock`) prevents concurrent branch pointer writes
 - Sessions batch all writes in a single transaction (atomic commit/rollback)
 

@@ -1,7 +1,10 @@
 """Tests for v0.2.2 fixes: concurrent store, fsck refs, import validation, branch/tag separation."""
 
 import os
+import sqlite3
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
 
 import pytest
 
@@ -32,11 +35,49 @@ class TestAtomicStore:
         assert entries[0]["parent_hash"] == h2
         assert entries[1]["parent_hash"] == h1
 
-    def test_store_rollback_on_error(self):
-        """If store fails mid-way, ref should not be corrupted."""
+    def test_concurrent_stores_no_lost_history(self):
+        """Two threads storing concurrently must both appear in the chain."""
+        os.chdir(self._tmp)
+        N = 10
+
+        def do_store(i):
+            return vek.store(tool=f"t{i}", input=str(i), output=f"r{i}")
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            hashes = list(pool.map(do_store, range(N)))
+
+        # All N hashes should be distinct and reachable
+        assert len(set(hashes)) == N
+        entries = vek.log(n=N + 5)
+        entry_hashes = {e["hash"] for e in entries}
+        for h in hashes:
+            assert h in entry_hashes, f"hash {h[:10]} lost from history"
+
+        # No unreachable garbage
+        result = vek.gc(dry_run=True)
+        assert result["unreachable_nodes"] == []
+
+    def test_store_rollback_on_failure(self):
+        """If put_node raises, ref and objects should not be corrupted."""
         h1 = vek.store(tool="a", input="1", output="r1")
         tip_before = vek.status()["tip"]
         assert tip_before == h1
+
+        # Patch put_node to raise after blobs are written
+        original_put_node = DB.put_node
+
+        def exploding_put_node(self, *args, **kwargs):
+            raise RuntimeError("simulated failure")
+
+        with patch.object(DB, "put_node", exploding_put_node):
+            with pytest.raises(RuntimeError, match="simulated failure"):
+                vek.store(tool="b", input="2", output="r2")
+
+        # Ref should still point to h1 — not corrupted
+        tip_after = vek.status()["tip"]
+        assert tip_after == h1
+        # Log should still have exactly 1 entry
+        assert len(vek.log()) == 1
 
 
 class TestFsckRefs:
