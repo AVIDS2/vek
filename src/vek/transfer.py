@@ -140,6 +140,10 @@ def import_json(db: DB, data: dict) -> dict:
     for ref in data.get("refs", []):
         existing = db.get_ref(ref["name"])
         if existing is None:
+            if db.get_node(ref["hash"]) is None:
+                stats.setdefault("refs_skipped_invalid", 0)
+                stats["refs_skipped_invalid"] += 1
+                continue
             db.set_ref(ref["name"], ref["hash"])
             stats["refs_imported"] += 1
 
@@ -192,6 +196,10 @@ def import_jsonl(db: DB, fp: IO[str]) -> dict:
 
     for ref in refs:
         if db.get_ref(ref["name"]) is None:
+            if db.get_node(ref["hash"]) is None:
+                stats.setdefault("refs_skipped_invalid", 0)
+                stats["refs_skipped_invalid"] += 1
+                continue
             db.set_ref(ref["name"], ref["hash"])
             stats["refs_imported"] += 1
 

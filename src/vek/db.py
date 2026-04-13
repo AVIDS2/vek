@@ -52,6 +52,18 @@ class DB:
         if self._autocommit:
             self._conn.commit()
 
+    def begin_immediate(self) -> None:
+        """Start an IMMEDIATE transaction (grabs a write lock)."""
+        self._conn.execute("BEGIN IMMEDIATE")
+
+    def commit(self) -> None:
+        """Commit the current transaction."""
+        self._conn.commit()
+
+    def rollback(self) -> None:
+        """Roll back the current transaction."""
+        self._conn.rollback()
+
     def _migrate(self) -> None:
         ver = self._conn.execute("PRAGMA user_version").fetchone()[0]
         if ver == 0:

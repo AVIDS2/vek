@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vek"
-version = "0.2.1"
+version = "0.2.2"
 description = "Content-addressed execution store for AI agents — git semantics for agent tool calls."
 readme = "README.md"
 license = "AGPL-3.0-only"

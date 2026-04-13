@@ -73,6 +73,11 @@ def fsck(db: DB) -> list[dict]:
             if db.get_node(merge_h) is None:
                 errors.append({"hash": h, "error": f"missing merge parent {merge_h[:10]}"})
 
+    # 8. Verify all refs point to existing nodes
+    for name, ref_hash in db.list_refs():
+        if db.get_node(ref_hash) is None:
+            errors.append({"hash": ref_hash, "error": f"ref '{name}' points to non-existent node {ref_hash[:10]}"})
+
     return errors
 
 

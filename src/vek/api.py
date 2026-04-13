@@ -90,31 +90,43 @@ def store(
     out_blob = canonical(output)
     in_hash = hash_blob(in_blob)
     out_hash = hash_blob(out_blob)
-    db.put_object(in_hash, in_blob)
-    db.put_object(out_hash, out_blob)
 
-    # --- resolve parent ---
-    branch_name = read_head(vd)
-    if parent is ...:
-        parent = db.get_ref(branch_name)
+    # --- atomic ref update: BEGIN IMMEDIATE prevents concurrent race ---
+    if own_db:
+        db.begin_immediate()
+    try:
+        db.put_object(in_hash, in_blob)
+        db.put_object(out_hash, out_blob)
 
-    # --- build node ---
-    ts = datetime.now(timezone.utc).isoformat()
-    node_payload = canonical(
-        dict(
-            tool=tool,
-            input_hash=in_hash,
-            output_hash=out_hash,
-            parent_hash=parent,
-            timestamp=ts,
+        # --- resolve parent ---
+        branch_name = read_head(vd)
+        if parent is ...:
+            parent = db.get_ref(branch_name)
+
+        # --- build node ---
+        ts = datetime.now(timezone.utc).isoformat()
+        node_payload = canonical(
+            dict(
+                tool=tool,
+                input_hash=in_hash,
+                output_hash=out_hash,
+                parent_hash=parent,
+                timestamp=ts,
+            )
         )
-    )
-    node_hash = hash_node(node_payload)
+        node_hash = hash_node(node_payload)
 
-    db.put_node(node_hash, tool, in_hash, out_hash, parent, ts)
+        db.put_node(node_hash, tool, in_hash, out_hash, parent, ts)
 
-    # --- advance branch pointer ---
-    db.set_ref(branch_name, node_hash)
+        # --- advance branch pointer ---
+        db.set_ref(branch_name, node_hash)
+
+        if own_db:
+            db.commit()
+    except Exception:
+        if own_db:
+            db.rollback()
+        raise
 
     if own_db:
         db.close()
@@ -142,7 +154,7 @@ def branch(name: str | None = None) -> str | list[tuple[str, str]]:
     """
     vd, db = _open()
     if name is None:
-        refs = db.list_refs()
+        refs = [(n, h) for n, h in db.list_refs() if not n.startswith("tag/")]
         db.close()
         return refs
     existing = db.get_ref(name)
