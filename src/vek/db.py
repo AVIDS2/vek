@@ -68,6 +68,15 @@ class DB:
         ver = self._conn.execute("PRAGMA user_version").fetchone()[0]
         if ver == 0:
             self._conn.executescript(_SCHEMA_V1)
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_nodes_tool ON nodes(tool)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_nodes_timestamp ON nodes(timestamp)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_hash)"
+            )
             self._conn.execute(f"PRAGMA user_version = {_CURRENT_VERSION}")
             self._conn.commit()
         elif ver < _CURRENT_VERSION:
