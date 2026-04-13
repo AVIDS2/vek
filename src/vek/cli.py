@@ -163,6 +163,38 @@ def cmd_gc(args: argparse.Namespace) -> None:
         print("cleaned.")
 
 
+def cmd_query(args: argparse.Namespace) -> None:
+    nodes = api.query(
+        tool=args.tool,
+        since=args.since,
+        until=args.until,
+        branch=args.branch,
+        limit=args.limit,
+    )
+    if not nodes:
+        print("(no matches)")
+        return
+    for nd in nodes:
+        print(f"\033[33m{_short(nd['hash'])}\033[0m {nd['tool']}  {nd['timestamp']}")
+
+
+def cmd_search(args: argparse.Namespace) -> None:
+    nodes = api.search(args.pattern, in_field=args.field, limit=args.limit)
+    if not nodes:
+        print("(no matches)")
+        return
+    for nd in nodes:
+        print(f"\033[33m{_short(nd['hash'])}\033[0m {nd['tool']}  {nd['timestamp']}")
+
+
+def cmd_annotate(args: argparse.Namespace) -> None:
+    chain = api.annotate(args.hash)
+    for i, step in enumerate(chain):
+        print(f"[{i}] \033[33m{_short(step['hash'])}\033[0m {step['tool']}  {step['timestamp']}")
+        print(f"    in:  {json.dumps(step['input'], ensure_ascii=False)}")
+        print(f"    out: {json.dumps(step['output'], ensure_ascii=False)}")
+
+
 def cmd_export(args: argparse.Namespace) -> None:
     result = api.export(branch=args.branch, format=args.format)
     if args.format == "json":
@@ -241,6 +273,21 @@ def main(argv: list[str] | None = None) -> None:
     gcmd = sub.add_parser("gc", help="Remove unreachable objects")
     gcmd.add_argument("--dry-run", action="store_true", help="Preview only")
 
+    qy = sub.add_parser("query", help="Query nodes by tool/time/branch")
+    qy.add_argument("--tool", help="Filter by tool name")
+    qy.add_argument("--since", help="ISO timestamp lower bound")
+    qy.add_argument("--until", help="ISO timestamp upper bound")
+    qy.add_argument("--branch", help="Restrict to branch")
+    qy.add_argument("--limit", type=int, default=50, help="Max results")
+
+    fd = sub.add_parser("search", help="Search node content")
+    fd.add_argument("pattern", help="Search pattern")
+    fd.add_argument("--field", choices=["input", "output", "both"], default="both")
+    fd.add_argument("--limit", type=int, default=50, help="Max results")
+
+    an = sub.add_parser("annotate", help="Annotate first-parent chain")
+    an.add_argument("hash", help="Tip node hash")
+
     exp = sub.add_parser("export", help="Export execution chains")
     exp.add_argument("--branch", help="Export only this branch")
     exp.add_argument("--format", choices=["json", "jsonl"], default="json")
@@ -269,6 +316,9 @@ def main(argv: list[str] | None = None) -> None:
         "merge": cmd_merge,
         "fsck": cmd_fsck,
         "gc": cmd_gc,
+        "query": cmd_query,
+        "search": cmd_search,
+        "annotate": cmd_annotate,
         "export": cmd_export,
         "import": cmd_import,
     }

@@ -55,6 +55,9 @@ vek fork <hash>           # fork at a node
 vek merge <branch>        # merge branch into current
 vek diff <hash1> <hash2>  # structural JSON diff
 vek replay <hash>         # replay first-parent chain
+vek query [--tool X] [--since T] [--until T] [--branch B] [--limit N]
+vek search <pattern> [--field input|output|both] [--limit N]
+vek annotate <hash>       # annotate chain with materialised content
 vek tag [name] [hash]     # list or create tags
 vek fsck                  # verify repository integrity
 vek gc [--dry-run]        # remove unreachable objects
@@ -83,6 +86,9 @@ vek --version
 | `vek.merge(branch)` | Merge branch (creates multi-parent node) |
 | `vek.diff(h1, h2)` | Structural JSON diff |
 | `vek.replay(hash)` | First-parent chain from root to hash |
+| `vek.query(tool=, since=, until=, branch=, limit=)` | Filtered node query |
+| `vek.search(pattern, in_field=, limit=)` | Search by input/output content |
+| `vek.annotate(hash)` | Annotate chain with materialised content |
 | `vek.tag(name, hash)` | Lightweight tags |
 | `vek.fsck()` | Integrity verification |
 | `vek.gc()` | Garbage collection |

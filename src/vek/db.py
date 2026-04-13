@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS refs (
 );
 """
 
-_CURRENT_VERSION = 2
+_CURRENT_VERSION = 3
 
 
 class DB:
@@ -72,12 +72,24 @@ class DB:
             self._conn.commit()
         elif ver < _CURRENT_VERSION:
             # v1 -> v2: add merge_parent column
-            try:
+            if ver < 2:
+                try:
+                    self._conn.execute(
+                        "ALTER TABLE nodes ADD COLUMN merge_parent TEXT"
+                    )
+                except sqlite3.OperationalError:
+                    pass  # column already exists
+            # v2 -> v3: add indexes for query performance
+            if ver < 3:
                 self._conn.execute(
-                    "ALTER TABLE nodes ADD COLUMN merge_parent TEXT"
+                    "CREATE INDEX IF NOT EXISTS idx_nodes_tool ON nodes(tool)"
                 )
-            except sqlite3.OperationalError:
-                pass  # column already exists
+                self._conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_nodes_timestamp ON nodes(timestamp)"
+                )
+                self._conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_hash)"
+                )
             self._conn.execute(f"PRAGMA user_version = {_CURRENT_VERSION}")
             self._conn.commit()
 
@@ -214,6 +226,100 @@ class DB:
                 f"ambiguous prefix {prefix!r} matches {len(hashes)} objects"
             )
         return hashes[0]
+
+    # ------------------------------------------------------------------- query
+
+    def query_nodes(
+        self,
+        *,
+        tool: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        branch: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Query nodes with optional filters.
+
+        If *branch* is given, only returns nodes reachable from that
+        branch tip.  Otherwise searches all nodes in the repository.
+        """
+        if branch is not None:
+            tip = self.get_ref(branch)
+            if tip is None:
+                return []
+            candidates = {n["hash"]: n for n in self.walk(tip)}
+        else:
+            rows = self._conn.execute(
+                "SELECT hash, tool, input_hash, output_hash, parent_hash,"
+                "       timestamp, merge_parent FROM nodes"
+            ).fetchall()
+            candidates = {
+                r[0]: dict(
+                    hash=r[0], tool=r[1], input_hash=r[2], output_hash=r[3],
+                    parent_hash=r[4], timestamp=r[5], merge_parent=r[6],
+                )
+                for r in rows
+            }
+
+        results: list[dict] = []
+        for n in sorted(
+            candidates.values(),
+            key=lambda x: x["timestamp"],
+            reverse=True,
+        ):
+            if tool is not None and n["tool"] != tool:
+                continue
+            if since is not None and n["timestamp"] < since:
+                continue
+            if until is not None and n["timestamp"] > until:
+                continue
+            results.append(n)
+            if len(results) >= limit:
+                break
+        return results
+
+    def search_content(
+        self,
+        pattern: str,
+        *,
+        in_field: str = "both",  # "input", "output", or "both"
+        limit: int = 50,
+    ) -> list[dict]:
+        """Search nodes whose input/output JSON contains *pattern*.
+
+        Uses SQLite LIKE on the raw object content for a lightweight
+        full-text search.  Returns matching nodes (newest first).
+        """
+        like = f"%{pattern}%"
+        if in_field == "input":
+            fields = ["input_hash"]
+        elif in_field == "output":
+            fields = ["output_hash"]
+        else:
+            fields = ["input_hash", "output_hash"]
+
+        node_hashes: set[str] = set()
+        for field in fields:
+            rows = self._conn.execute(
+                f"SELECT hash FROM objects WHERE content LIKE ?", (like,)
+            ).fetchall()
+            obj_hashes = {r[0] for r in rows}
+            if not obj_hashes:
+                continue
+            placeholders = ",".join("?" for _ in obj_hashes)
+            node_rows = self._conn.execute(
+                f"SELECT hash FROM nodes WHERE {field} IN ({placeholders})",
+                list(obj_hashes),
+            ).fetchall()
+            node_hashes.update(r[0] for r in node_rows)
+
+        results: list[dict] = []
+        for h in node_hashes:
+            n = self.get_node(h)
+            if n is not None:
+                results.append(n)
+        results.sort(key=lambda x: x["timestamp"], reverse=True)
+        return results[:limit]
 
     # ------------------------------------------------------------------- stats
 

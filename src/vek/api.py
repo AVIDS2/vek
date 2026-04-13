@@ -452,3 +452,73 @@ def import_data(data: dict | str, *, format: str = "json") -> dict:
         result = _import_json(db, data)  # type: ignore[arg-type]
     db.close()
     return result
+
+
+# ----------------------------------------------------------------------- query
+
+
+def query(
+    *,
+    tool: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    branch: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """Query nodes with optional filters.
+
+    All parameters are optional and combinable:
+
+    - ``tool="search"`` — only nodes from that tool
+    - ``since="2025-01-01"`` — ISO timestamp lower bound
+    - ``until="2025-06-01"`` — ISO timestamp upper bound
+    - ``branch="dev"`` — only nodes reachable from that branch
+    - ``limit=50`` — max results (default 50)
+    """
+    _vd, db = _open()
+    results = db.query_nodes(
+        tool=tool, since=since, until=until, branch=branch, limit=limit,
+    )
+    db.close()
+    return results
+
+
+def search(
+    pattern: str,
+    *,
+    in_field: str = "both",
+    limit: int = 50,
+) -> list[dict]:
+    """Search nodes whose input/output content contains *pattern*.
+
+    - ``in_field="input"`` — only search input blobs
+    - ``in_field="output"`` — only search output blobs
+    - ``in_field="both"`` — search both (default)
+    """
+    _vd, db = _open()
+    results = db.search_content(pattern, in_field=in_field, limit=limit)
+    db.close()
+    return results
+
+
+def annotate(node_hash: str) -> list[dict]:
+    """Annotate each node in the first-parent chain with resolved content.
+
+    Returns a list of dicts (root-first), each containing:
+    ``hash``, ``tool``, ``timestamp``, ``parent_hash``, ``merge_parent``,
+    ``input`` (materialised), ``output`` (materialised).
+    """
+    _vd, db = _open()
+    node_hash = _resolve(db, node_hash)
+    chain = db.walk_linear(node_hash)
+    if not chain:
+        db.close()
+        raise VekError(f"node not found: {node_hash}")
+    annotated = []
+    for node in reversed(chain):
+        entry = dict(node)
+        entry["input"] = json.loads(db.get_object(node["input_hash"]) or b"null")
+        entry["output"] = json.loads(db.get_object(node["output_hash"]) or b"null")
+        annotated.append(entry)
+    db.close()
+    return annotated
