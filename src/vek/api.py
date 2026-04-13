@@ -129,7 +129,7 @@ def log(n: int = 20, *, branch_name: str | None = None) -> list[dict]:
     if tip is None:
         db.close()
         return []
-    chain = db.walk(tip)[:n]
+    chain = db.walk_linear(tip)[:n]
     db.close()
     return chain
 
@@ -205,11 +205,11 @@ def diff(hash1: str, hash2: str) -> dict:
 
 
 def replay(node_hash: str) -> list[dict]:
-    """Return the full execution chain from root to *node_hash*,
+    """Return the linear execution chain from root to *node_hash*,
     with input/output content materialised inline."""
     vd, db = _open()
     node_hash = _resolve(db, node_hash)
-    chain = db.walk(node_hash)
+    chain = db.walk_linear(node_hash)
     if not chain:
         db.close()
         raise VekError(f"node not found: {node_hash}")

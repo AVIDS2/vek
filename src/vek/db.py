@@ -121,7 +121,31 @@ class DB:
         )
 
     def walk(self, start: str) -> list[dict]:
-        """Traverse parent chain from *start* back to root."""
+        """BFS traversal of the DAG from *start*, following both
+        ``parent_hash`` and ``merge_parent`` links.
+
+        Returns nodes in topological-ish order (newest first).
+        """
+        result: list[dict] = []
+        seen: set[str] = set()
+        queue: list[str] = [start]
+        while queue:
+            cur = queue.pop(0)
+            if cur in seen:
+                continue
+            node = self.get_node(cur)
+            if node is None:
+                continue
+            seen.add(cur)
+            result.append(node)
+            if node["parent_hash"]:
+                queue.append(node["parent_hash"])
+            if node.get("merge_parent"):
+                queue.append(node["merge_parent"])
+        return result
+
+    def walk_linear(self, start: str) -> list[dict]:
+        """Traverse only the ``parent_hash`` chain (linear history)."""
         chain: list[dict] = []
         cur: str | None = start
         while cur:

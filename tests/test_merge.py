@@ -62,6 +62,40 @@ class TestMerge:
         assert errors == []
 
 
+    def test_walk_covers_both_parents(self):
+        """walk() should traverse merge_parent branch too (DAG BFS)."""
+        h_base = vek.store(tool="base", input="0", output="r0")
+        vek.branch("dev")
+        h_dev = vek.store(tool="dev_work", input="d", output="rd")
+        vek.branch("main")
+        h_main = vek.store(tool="main_work", input="m", output="rm")
+        h_merge = vek.merge("dev")
+        # Full DAG walk from merge node should include all 4 nodes
+        from vek.repo import find, DB_NAME
+        from vek.db import DB
+        vd = find()
+        db = DB(vd / DB_NAME)
+        all_nodes = db.walk(h_merge)
+        db.close()
+        hashes = {n["hash"] for n in all_nodes}
+        assert h_merge in hashes
+        assert h_main in hashes
+        assert h_dev in hashes
+        assert h_base in hashes
+
+    def test_gc_safe_after_merge(self):
+        """gc should not delete nodes reachable via merge_parent."""
+        vek.store(tool="base", input="0", output="r0")
+        vek.branch("dev")
+        vek.store(tool="dev_work", input="d", output="rd")
+        vek.branch("main")
+        vek.store(tool="main_work", input="m", output="rm")
+        vek.merge("dev")
+        result = vek.gc(dry_run=True)
+        assert result["unreachable_nodes"] == []
+        assert result["orphan_objects"] == []
+
+
 class TestGraphLog:
     def setup_method(self):
         self._tmp = tempfile.mkdtemp()
