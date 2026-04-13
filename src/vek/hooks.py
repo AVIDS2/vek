@@ -26,7 +26,7 @@ from typing import Any, Callable, TypeVar
 
 from vek.api import _open, store as _store
 from vek.db import DB
-from vek.repo import read_head
+from vek.repo import HeadLock, read_head
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -109,6 +109,7 @@ class AsyncSession:
         self._vd: Path | None = None
         self._db: DB | None = None
         self._tip: str | None = None
+        self._lock: HeadLock | None = None
         self._count: int = 0
 
     async def __aenter__(self) -> AsyncSession:
@@ -116,20 +117,36 @@ class AsyncSession:
         self._vd, self._db = await loop.run_in_executor(
             None, _open, self._start_path
         )
+        self._lock = HeadLock(self._vd)
+        # Retry lock acquisition with async-friendly backoff
+        from vek.repo import LockError
+        for attempt in range(50):  # up to ~5s total
+            try:
+                await loop.run_in_executor(None, self._lock.__enter__)
+                break
+            except LockError:
+                if attempt == 49:
+                    raise
+                await asyncio.sleep(0.1)
+        self._db.begin_immediate()
+        self._db._autocommit = False
         branch = read_head(self._vd)
         self._tip = self._db.get_ref(branch)
-        self._db._autocommit = False
         return self
 
     async def __aexit__(self, exc_type: type | None, *exc: object) -> bool:
         loop = asyncio.get_running_loop()
         if self._db is not None:
             if exc_type is None:
-                await loop.run_in_executor(None, self._db._conn.commit)
+                await loop.run_in_executor(None, self._db.commit)
             else:
-                await loop.run_in_executor(None, self._db._conn.rollback)
+                await loop.run_in_executor(None, self._db.rollback)
             self._db._autocommit = True
             self._db.close()
+        if self._lock is not None:
+            await loop.run_in_executor(
+                None, self._lock.__exit__, exc_type, None, None
+            )
         return False
 
     def store(self, tool: str, input: object, output: object) -> str:

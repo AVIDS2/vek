@@ -102,3 +102,27 @@ class TestAsyncSession:
 
         count = asyncio.run(run())
         assert count == 2
+
+    def test_concurrent_async_sessions(self):
+        """Two concurrent async sessions must not raise database is locked."""
+        async def worker(name, n):
+            async with vek.async_session() as s:
+                for i in range(n):
+                    s.store(tool=f"{name}_{i}", input=str(i), output=f"r{i}")
+                return s.count
+
+        async def run():
+            t1 = asyncio.create_task(worker("a", 3))
+            t2 = asyncio.create_task(worker("b", 3))
+            c1, c2 = await asyncio.gather(t1, t2)
+            return c1, c2
+
+        c1, c2 = asyncio.run(run())
+        assert c1 == 3
+        assert c2 == 3
+        entries = vek.log(n=10)
+        # Both sessions committed — at least 3 entries on current branch
+        assert len(entries) >= 3
+        # No unreachable garbage
+        result = vek.gc(dry_run=True)
+        assert result["unreachable_nodes"] == []
