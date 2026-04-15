@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Callable
 
 from vek.core import canonical, hash_blob, hash_node
 from vek.db import DB
@@ -522,3 +523,124 @@ def annotate(node_hash: str) -> list[dict]:
         annotated.append(entry)
     db.close()
     return annotated
+
+
+# ------------------------------------------------------------------ verification
+
+
+def verify(
+    node_hash: str,
+    executor: Callable[[str, Any], Any],
+) -> list[dict]:
+    """Dry-run re-execution: replay a first-parent chain and compare outputs.
+
+    *executor* is a callable with signature ``(tool, input) -> output``.
+    For each node in the chain (root-first), verify calls
+    ``executor(node["tool"], node["input"])`` and compares the result
+    with the stored output using content hashing.
+
+    Returns a list of dicts, one per node, each containing:
+
+    - ``hash`` — node hash
+    - ``tool`` — tool name
+    - ``match`` — ``True`` if re-executed output matches stored output
+    - ``stored_output`` — the original output
+    - ``reexec_output`` — the output from *executor*
+
+    No data is written to the repository.
+    """
+    from vek.core import canonical
+
+    _vd, db = _open()
+    node_hash = _resolve(db, node_hash)
+    chain = db.walk_linear(node_hash)
+    if not chain:
+        db.close()
+        raise VekError(f"node not found: {node_hash}")
+
+    results: list[dict] = []
+    for node in reversed(chain):  # root-first
+        stored_input = json.loads(db.get_object(node["input_hash"]) or b"null")
+        stored_output = json.loads(db.get_object(node["output_hash"]) or b"null")
+        try:
+            reexec_output = executor(node["tool"], stored_input)
+        except Exception as exc:
+            results.append(dict(
+                hash=node["hash"],
+                tool=node["tool"],
+                match=False,
+                stored_output=stored_output,
+                reexec_output=None,
+                error=str(exc),
+            ))
+            continue
+        # Compare via content hash (deterministic serialisation)
+        stored_bytes = canonical(stored_output)
+        reexec_bytes = canonical(reexec_output)
+        results.append(dict(
+            hash=node["hash"],
+            tool=node["tool"],
+            match=(stored_bytes == reexec_bytes),
+            stored_output=stored_output,
+            reexec_output=reexec_output,
+        ))
+    db.close()
+    return results
+
+
+def diff_chains(hash1: str, hash2: str) -> list[dict]:
+    """Compare two first-parent chains node-by-node.
+
+    Aligns chains from their roots and compares corresponding positions.
+    Returns a list of dicts, each containing:
+
+    - ``position`` — index from root (0-based)
+    - ``node_a`` — node dict from chain A (or ``None`` if chain is shorter)
+    - ``node_b`` — node dict from chain B (or ``None`` if chain is shorter)
+    - ``input_match`` — ``True`` if inputs match at this position
+    - ``output_match`` — ``True`` if outputs match at this position
+    """
+    from vek.core import canonical
+
+    _vd, db = _open()
+    h1 = _resolve(db, hash1)
+    h2 = _resolve(db, hash2)
+    chain_a = list(reversed(db.walk_linear(h1)))  # root-first
+    chain_b = list(reversed(db.walk_linear(h2)))
+
+    # Materialise content while db is open
+    def _mat(node: dict) -> dict:
+        entry = dict(node)
+        entry["input"] = json.loads(db.get_object(node["input_hash"]) or b"null")
+        entry["output"] = json.loads(db.get_object(node["output_hash"]) or b"null")
+        return entry
+
+    mat_a = [_mat(n) for n in chain_a]
+    mat_b = [_mat(n) for n in chain_b]
+    db.close()
+
+    results: list[dict] = []
+    max_len = max(len(mat_a), len(mat_b))
+    for i in range(max_len):
+        na = mat_a[i] if i < len(mat_a) else None
+        nb = mat_b[i] if i < len(mat_b) else None
+        if na is not None and nb is not None:
+            input_match = canonical(na["input"]) == canonical(nb["input"])
+            output_match = canonical(na["output"]) == canonical(nb["output"])
+            results.append(dict(
+                position=i,
+                node_a=dict(hash=na["hash"], tool=na["tool"]),
+                node_b=dict(hash=nb["hash"], tool=nb["tool"]),
+                input_match=input_match,
+                output_match=output_match,
+            ))
+        else:
+            src = na or nb
+            results.append(dict(
+                position=i,
+                node_a=dict(hash=na["hash"], tool=na["tool"]) if na else None,
+                node_b=dict(hash=nb["hash"], tool=nb["tool"]) if nb else None,
+                input_match=False,
+                output_match=False,
+            ))
+    return results

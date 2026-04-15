@@ -195,6 +195,45 @@ def cmd_annotate(args: argparse.Namespace) -> None:
         print(f"    out: {json.dumps(step['output'], ensure_ascii=False)}")
 
 
+def cmd_verify(args: argparse.Namespace) -> None:
+    # Build a simple executor from --exec-module or --exec-function
+    if args.exec_function:
+        mod_name, func_name = args.exec_function.rsplit(":", 1)
+        import importlib
+        mod = importlib.import_module(mod_name)
+        executor = getattr(mod, func_name)
+    else:
+        # Default: no-op executor that always returns None
+        executor = lambda tool, inp: None
+    results = api.verify(args.hash, executor)
+    mismatches = 0
+    for r in results:
+        status = "\033[32mOK\033[0m" if r["match"] else "\033[31mMISMATCH\033[0m"
+        if not r["match"]:
+            mismatches += 1
+        print(f"[{r['tool']}] {_short(r['hash'])} {status}")
+        if not r["match"] and "error" not in r:
+            print(f"  stored:  {json.dumps(r['stored_output'], ensure_ascii=False)}")
+            print(f"  reexec:  {json.dumps(r['reexec_output'], ensure_ascii=False)}")
+        elif "error" in r:
+            print(f"  error: {r['error']}")
+    if mismatches:
+        print(f"\n{mismatches} mismatch(es) out of {len(results)} node(s)")
+        sys.exit(1)
+    else:
+        print(f"\nAll {len(results)} node(s) verified OK")
+
+
+def cmd_diff_chains(args: argparse.Namespace) -> None:
+    results = api.diff_chains(args.hash1, args.hash2)
+    for r in results:
+        a = _short(r["node_a"]["hash"]) if r["node_a"] else "(none)"
+        b = _short(r["node_b"]["hash"]) if r["node_b"] else "(none)"
+        in_s = "\033[32m=\033[0m" if r["input_match"] else "\033[31m!=\033[0m"
+        out_s = "\033[32m=\033[0m" if r["output_match"] else "\033[31m!=\033[0m"
+        print(f"[{r['position']}] {a} vs {b}  in:{in_s} out:{out_s}")
+
+
 def cmd_export(args: argparse.Namespace) -> None:
     result = api.export(branch=args.branch, format=args.format)
     if args.format == "json":
@@ -288,6 +327,14 @@ def main(argv: list[str] | None = None) -> None:
     an = sub.add_parser("annotate", help="Annotate first-parent chain")
     an.add_argument("hash", help="Tip node hash")
 
+    vr = sub.add_parser("verify", help="Verify chain by re-execution")
+    vr.add_argument("hash", help="Tip node hash")
+    vr.add_argument("--exec-function", help="module:function executor")
+
+    dc = sub.add_parser("diff-chains", help="Compare two chains node-by-node")
+    dc.add_argument("hash1", help="Tip of chain A")
+    dc.add_argument("hash2", help="Tip of chain B")
+
     exp = sub.add_parser("export", help="Export execution chains")
     exp.add_argument("--branch", help="Export only this branch")
     exp.add_argument("--format", choices=["json", "jsonl"], default="json")
@@ -319,6 +366,8 @@ def main(argv: list[str] | None = None) -> None:
         "query": cmd_query,
         "search": cmd_search,
         "annotate": cmd_annotate,
+        "verify": cmd_verify,
+        "diff-chains": cmd_diff_chains,
         "export": cmd_export,
         "import": cmd_import,
     }

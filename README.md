@@ -58,6 +58,8 @@ vek replay <hash>         # replay first-parent chain
 vek query [--tool X] [--since T] [--until T] [--branch B] [--limit N]
 vek search <pattern> [--field input|output|both] [--limit N]
 vek annotate <hash>       # annotate chain with materialised content
+vek verify <hash> [--exec-function module:func]  # verify by re-execution
+vek diff-chains <h1> <h2> # compare two chains node-by-node
 vek tag [name] [hash]     # list or create tags
 vek fsck                  # verify repository integrity
 vek gc [--dry-run]        # remove unreachable objects
@@ -89,6 +91,8 @@ vek --version
 | `vek.query(tool=, since=, until=, branch=, limit=)` | Filtered node query |
 | `vek.search(pattern, in_field=, limit=)` | Search by input/output content |
 | `vek.annotate(hash)` | Annotate chain with materialised content |
+| `vek.verify(hash, executor)` | Dry-run re-execution with output comparison |
+| `vek.diff_chains(h1, h2)` | Compare two chains node-by-node |
 | `vek.tag(name, hash)` | Lightweight tags |
 | `vek.fsck()` | Integrity verification |
 | `vek.gc()` | Garbage collection |
