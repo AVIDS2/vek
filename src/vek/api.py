@@ -13,6 +13,9 @@ from typing import Any, Callable
 
 from vek.core import canonical, hash_blob, hash_node
 from vek.db import DB
+
+# When True, store() raises — prevents accidental writes during verify()
+_verify_active = False
 from vek.graph import graph_log as _graph_log, json_diff
 from vek.integrity import fsck as _fsck, gc as _gc
 from vek.transfer import (
@@ -81,6 +84,8 @@ def store(
     chained to the tip of the current branch (like ``git commit``).
     """
     own_db = _db is None
+    if _verify_active:
+        raise VekError("store() disabled during verify() — executor must not write")
     if own_db:
         vd, db = _open()
     else:
@@ -551,6 +556,7 @@ def verify(
     """
     from vek.core import canonical
 
+    global _verify_active
     _vd, db = _open()
     node_hash = _resolve(db, node_hash)
     chain = db.walk_linear(node_hash)
@@ -559,32 +565,36 @@ def verify(
         raise VekError(f"node not found: {node_hash}")
 
     results: list[dict] = []
-    for node in reversed(chain):  # root-first
-        stored_input = json.loads(db.get_object(node["input_hash"]) or b"null")
-        stored_output = json.loads(db.get_object(node["output_hash"]) or b"null")
-        try:
-            reexec_output = executor(node["tool"], stored_input)
-        except Exception as exc:
+    _verify_active = True
+    try:
+        for node in reversed(chain):  # root-first
+            stored_input = json.loads(db.get_object(node["input_hash"]) or b"null")
+            stored_output = json.loads(db.get_object(node["output_hash"]) or b"null")
+            try:
+                reexec_output = executor(node["tool"], stored_input)
+                # Compare via content hash (deterministic serialisation)
+                stored_bytes = canonical(stored_output)
+                reexec_bytes = canonical(reexec_output)
+            except Exception as exc:
+                results.append(dict(
+                    hash=node["hash"],
+                    tool=node["tool"],
+                    match=False,
+                    stored_output=stored_output,
+                    reexec_output=None,
+                    error=str(exc),
+                ))
+                continue
             results.append(dict(
                 hash=node["hash"],
                 tool=node["tool"],
-                match=False,
+                match=(stored_bytes == reexec_bytes),
                 stored_output=stored_output,
-                reexec_output=None,
-                error=str(exc),
+                reexec_output=reexec_output,
             ))
-            continue
-        # Compare via content hash (deterministic serialisation)
-        stored_bytes = canonical(stored_output)
-        reexec_bytes = canonical(reexec_output)
-        results.append(dict(
-            hash=node["hash"],
-            tool=node["tool"],
-            match=(stored_bytes == reexec_bytes),
-            stored_output=stored_output,
-            reexec_output=reexec_output,
-        ))
-    db.close()
+    finally:
+        _verify_active = False
+        db.close()
     return results
 
 

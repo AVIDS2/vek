@@ -72,6 +72,54 @@ class TestVerify:
         results = vek.verify(h[:8], lambda t, i: i)
         assert len(results) == 1
 
+    def test_verify_blocks_store_in_executor(self):
+        """Executor that calls vek.store() must not mutate the repo."""
+        h = vek.store(tool="echo", input="hello", output="hello")
+        node_count_before = len(vek.log(n=100))
+
+        def bad_executor(tool, inp):
+            # This should raise — verify is read-only
+            vek.store(tool="side_effect", input="x", output="y")
+            return inp
+
+        results = vek.verify(h, bad_executor)
+        # The node where executor ran should report error
+        assert len(results) == 1
+        assert results[0]["match"] is False
+        assert "error" in results[0]
+        # No new nodes written
+        assert len(vek.log(n=100)) == node_count_before
+
+    def test_verify_non_canonicalizable_output(self):
+        """Executor returning un-serializable output should not crash verify."""
+        h = vek.store(tool="echo", input="hello", output="hello")
+
+        def circular_executor(tool, inp):
+            # Return a circular structure that canonical() can't handle
+            lst = [1, 2]
+            lst.append(lst)
+            return lst
+
+        results = vek.verify(h, circular_executor)
+        assert len(results) == 1
+        assert results[0]["match"] is False
+        assert "error" in results[0]
+
+    def test_verify_flag_reset_after_error(self):
+        """_verify_active must be reset even if verify() raises."""
+        h = vek.store(tool="echo", input="x", output="x")
+        from vek import api
+        assert api._verify_active is False
+        # Verify with an executor that raises on first node
+        try:
+            vek.verify(h, lambda t, i: (_ for _ in ()).throw(RuntimeError("boom")))
+        except Exception:
+            pass
+        # Flag must be reset
+        assert api._verify_active is False
+        # store() must work again
+        vek.store(tool="after", input="a", output="b")
+
 
 class TestDiffChains:
     def setup_method(self):
