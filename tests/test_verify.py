@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+import threading
 
 import vek
 
@@ -109,16 +110,44 @@ class TestVerify:
         """_verify_active must be reset even if verify() raises."""
         h = vek.store(tool="echo", input="x", output="x")
         from vek import api
-        assert api._verify_active is False
+        assert api._verify_active.get() is False
         # Verify with an executor that raises on first node
         try:
             vek.verify(h, lambda t, i: (_ for _ in ()).throw(RuntimeError("boom")))
         except Exception:
             pass
         # Flag must be reset
-        assert api._verify_active is False
+        assert api._verify_active.get() is False
         # store() must work again
         vek.store(tool="after", input="a", output="b")
+
+    def test_concurrent_store_not_blocked_by_verify(self):
+        """Unrelated store() in another thread must work during verify()."""
+        h = vek.store(tool="echo", input="hello", output="hello")
+
+        # Slow executor that sleeps
+        def slow_executor(tool, inp):
+            import time
+            time.sleep(0.2)
+            return inp
+
+        store_ok = []
+        def do_store():
+            try:
+                vek.store(tool="concurrent", input="x", output="y")
+                store_ok.append(True)
+            except vek.VekError:
+                store_ok.append(False)
+
+        t = threading.Thread(target=do_store)
+        # Start verify in this thread, and a concurrent store in another
+        import time
+        t.start()
+        time.sleep(0.05)  # let thread start
+        results = vek.verify(h, slow_executor)
+        t.join()
+        # The concurrent store should have succeeded (not blocked by verify)
+        assert store_ok == [True], "concurrent store was blocked by verify"
 
 
 class TestDiffChains:

@@ -10,12 +10,13 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+from contextvars import ContextVar
 
 from vek.core import canonical, hash_blob, hash_node
 from vek.db import DB
 
-# When True, store() raises — prevents accidental writes during verify()
-_verify_active = False
+# Per-thread/per-task guard: when set, store() in this context raises
+_verify_active = ContextVar('_verify_active', default=False)
 from vek.graph import graph_log as _graph_log, json_diff
 from vek.integrity import fsck as _fsck, gc as _gc
 from vek.transfer import (
@@ -84,7 +85,7 @@ def store(
     chained to the tip of the current branch (like ``git commit``).
     """
     own_db = _db is None
-    if _verify_active:
+    if _verify_active.get():
         raise VekError("store() disabled during verify() — executor must not write")
     if own_db:
         vd, db = _open()
@@ -556,7 +557,6 @@ def verify(
     """
     from vek.core import canonical
 
-    global _verify_active
     _vd, db = _open()
     node_hash = _resolve(db, node_hash)
     chain = db.walk_linear(node_hash)
@@ -565,7 +565,7 @@ def verify(
         raise VekError(f"node not found: {node_hash}")
 
     results: list[dict] = []
-    _verify_active = True
+    token = _verify_active.set(True)
     try:
         for node in reversed(chain):  # root-first
             stored_input = json.loads(db.get_object(node["input_hash"]) or b"null")
@@ -593,7 +593,7 @@ def verify(
                 reexec_output=reexec_output,
             ))
     finally:
-        _verify_active = False
+        _verify_active.reset(token)
         db.close()
     return results
 
