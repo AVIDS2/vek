@@ -700,10 +700,10 @@ def reexec(
 
     # Suppress executor side-effect writes (same guard as verify)
     token = _verify_active.set(True)
-    # Use a transaction so failed re-execution rolls back cleanly
-    db.begin_immediate()
-    db._autocommit = False
     try:
+        # Use a transaction so failed re-execution rolls back cleanly
+        db.begin_immediate()
+        db._autocommit = False
         parent = None
         count = 0
         for node in reversed(chain):  # root-first
