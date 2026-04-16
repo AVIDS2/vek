@@ -12,7 +12,7 @@ from vek.hooks import AsyncSession as _AsyncSession
 from vek.hooks import hook, wrap
 from vek.session import Session as _Session
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 __all__ = [
     "init", "store", "log", "branch", "fork", "diff", "replay",
     "show", "cat_file", "status", "tag", "fsck", "gc",

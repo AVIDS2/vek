@@ -249,6 +249,9 @@ def cmd_reexec(args: argparse.Namespace) -> None:
 
 def cmd_checkpoint(args: argparse.Namespace) -> None:
     if args.label:
+        if not args.hash:
+            print("error: hash is required when creating a checkpoint", file=sys.stderr)
+            sys.exit(1)
         ref = api.checkpoint(args.hash, args.label)
         print(f"Checkpoint '{args.label}' -> {_short(args.hash)}")
     else:

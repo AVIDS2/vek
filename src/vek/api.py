@@ -663,6 +663,9 @@ def diff_chains(hash1: str, hash2: str) -> list[dict]:
 CHECKPOINT_PREFIX = "checkpoint/"
 
 
+_RESERVED_PREFIXES = (TAG_PREFIX, CHECKPOINT_PREFIX)
+
+
 def reexec(
     node_hash: str,
     executor: Callable[[str, Any], Any],
@@ -676,6 +679,7 @@ def reexec(
     ``reexec-<hash[:8]>``).  The current branch is **never** advanced.
 
     Pass ``ref="my-branch"`` to choose the destination ref name.
+    Reserved namespaces (``tag/``, ``checkpoint/``) are rejected.
 
     Returns ``{"ref": str, "tip": str, "nodes": int}``.
     """
@@ -687,36 +691,52 @@ def reexec(
         raise VekError(f"node not found: {node_hash}")
 
     dest_ref = ref or f"reexec-{node_hash[:8]}"
+    if any(dest_ref.startswith(p) for p in _RESERVED_PREFIXES):
+        db.close()
+        raise VekError(f"ref uses reserved namespace: {dest_ref}")
     if db.get_ref(dest_ref) is not None:
         db.close()
         raise VekError(f"ref already exists: {dest_ref}")
 
-    parent = None
-    count = 0
-    for node in reversed(chain):  # root-first
-        stored_input = json.loads(db.get_object(node["input_hash"]) or b"null")
-        reexec_output = executor(node["tool"], stored_input)
-        in_blob = canonical(stored_input)
-        out_blob = canonical(reexec_output)
-        in_hash = hash_blob(in_blob)
-        out_hash = hash_blob(out_blob)
-        db.put_object(in_hash, in_blob)
-        db.put_object(out_hash, out_blob)
-        ts = datetime.now(timezone.utc).isoformat()
-        node_payload = canonical(dict(
-            tool=node["tool"],
-            input_hash=in_hash,
-            output_hash=out_hash,
-            parent_hash=parent,
-            timestamp=ts,
-        ))
-        nh = hash_node(node_payload)
-        db.put_node(nh, node["tool"], in_hash, out_hash, parent, ts)
-        parent = nh
-        count += 1
+    # Suppress executor side-effect writes (same guard as verify)
+    token = _verify_active.set(True)
+    # Use a transaction so failed re-execution rolls back cleanly
+    db.begin_immediate()
+    db._autocommit = False
+    try:
+        parent = None
+        count = 0
+        for node in reversed(chain):  # root-first
+            stored_input = json.loads(db.get_object(node["input_hash"]) or b"null")
+            reexec_output = executor(node["tool"], stored_input)
+            in_blob = canonical(stored_input)
+            out_blob = canonical(reexec_output)
+            in_hash = hash_blob(in_blob)
+            out_hash = hash_blob(out_blob)
+            db.put_object(in_hash, in_blob)
+            db.put_object(out_hash, out_blob)
+            ts = datetime.now(timezone.utc).isoformat()
+            node_payload = canonical(dict(
+                tool=node["tool"],
+                input_hash=in_hash,
+                output_hash=out_hash,
+                parent_hash=parent,
+                timestamp=ts,
+            ))
+            nh = hash_node(node_payload)
+            db.put_node(nh, node["tool"], in_hash, out_hash, parent, ts)
+            parent = nh
+            count += 1
 
-    db.set_ref(dest_ref, parent)
-    db.close()
+        db.set_ref(dest_ref, parent)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db._autocommit = True
+        _verify_active.reset(token)
+        db.close()
     return {"ref": dest_ref, "tip": parent, "nodes": count}
 
 

@@ -3,6 +3,7 @@
 import os
 import tempfile
 
+import pytest
 import vek
 from vek.api import VekError
 
@@ -50,7 +51,6 @@ class TestReexec:
     def test_reexec_ref_already_exists_raises(self):
         h = vek.store(tool="echo", input="x", output="x")
         vek.reexec(h, lambda t, i: i, ref="taken")
-        import pytest
         with pytest.raises(VekError, match="ref already exists"):
             vek.reexec(h, lambda t, i: i, ref="taken")
 
@@ -75,6 +75,57 @@ class TestReexec:
         vek.reexec(h, lambda t, i: i, ref="check")
         errors = vek.fsck()
         assert errors == []
+
+    def test_reexec_blocks_store_in_executor(self):
+        """Executor that calls vek.store() must not advance current branch."""
+        h = vek.store(tool="echo", input="hello", output="hello")
+        node_count_before = len(vek.log(n=100))
+
+        def bad_executor(tool, inp):
+            vek.store(tool="side_effect", input="x", output="y")
+            return inp
+
+        with pytest.raises(Exception):
+            vek.reexec(h, bad_executor, ref="bad")
+        # No side-effect nodes on current branch
+        assert len(vek.log(n=100)) == node_count_before
+
+    def test_reexec_failed_executor_rolls_back(self):
+        """Failed executor must not leave unreachable garbage."""
+        h1 = vek.store(tool="a", input="1", output="r1")
+        h2 = vek.store(tool="b", input="2", output="r2")
+        status_before = vek.status()
+
+        def failing_executor(tool, inp):
+            if tool == "b":
+                raise RuntimeError("boom")
+            return inp
+
+        with pytest.raises(RuntimeError, match="boom"):
+            vek.reexec(h2, failing_executor, ref="fail")
+        status_after = vek.status()
+        # Node and object counts must not increase
+        assert status_after["nodes"] == status_before["nodes"]
+
+    def test_reexec_rejects_tag_namespace(self):
+        h = vek.store(tool="echo", input="x", output="x")
+        with pytest.raises(VekError, match="reserved namespace"):
+            vek.reexec(h, lambda t, i: i, ref="tag/fake")
+
+    def test_reexec_rejects_checkpoint_namespace(self):
+        h = vek.store(tool="echo", input="x", output="x")
+        with pytest.raises(VekError, match="reserved namespace"):
+            vek.reexec(h, lambda t, i: i, ref="checkpoint/fake")
+
+    def test_reexec_store_works_after_failed(self):
+        """_verify_active must be reset even if reexec() fails."""
+        h = vek.store(tool="echo", input="x", output="x")
+        try:
+            vek.reexec(h, lambda t, i: (_ for _ in ()).throw(RuntimeError("boom")), ref="err")
+        except RuntimeError:
+            pass
+        # store() must work again
+        vek.store(tool="after", input="a", output="b")
 
 
 class TestCheckpoint:
@@ -102,7 +153,6 @@ class TestCheckpoint:
     def test_checkpoint_duplicate_raises(self):
         h = vek.store(tool="echo", input="x", output="x")
         vek.checkpoint(h, "dup")
-        import pytest
         with pytest.raises(VekError, match="checkpoint already exists"):
             vek.checkpoint(h, "dup")
 
