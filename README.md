@@ -60,6 +60,8 @@ vek search <pattern> [--field input|output|both] [--limit N]
 vek annotate <hash>       # annotate chain with materialised content
 vek verify <hash> [--exec-function module:func]  # verify by re-execution
 vek diff-chains <h1> <h2> # compare two chains node-by-node
+vek reexec <hash> [--exec-function module:func] [--ref name]  # re-execute into new ref
+vek checkpoint [label] [hash]  # list or create checkpoints
 vek tag [name] [hash]     # list or create tags
 vek fsck                  # verify repository integrity
 vek gc [--dry-run]        # remove unreachable objects
@@ -93,6 +95,9 @@ vek --version
 | `vek.annotate(hash)` | Annotate chain with materialised content |
 | `vek.verify(hash, executor)` | Dry-run re-execution with output comparison |
 | `vek.diff_chains(h1, h2)` | Compare two chains node-by-node |
+| `vek.reexec(hash, executor, ref=)` | Re-execute chain into new ref |
+| `vek.checkpoint(hash, label)` | Mark verified checkpoint |
+| `vek.list_checkpoints()` | List all checkpoints |
 | `vek.tag(name, hash)` | Lightweight tags |
 | `vek.fsck()` | Integrity verification |
 | `vek.gc()` | Garbage collection |

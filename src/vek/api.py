@@ -165,7 +165,8 @@ def branch(name: str | None = None) -> str | list[tuple[str, str]]:
     """
     vd, db = _open()
     if name is None:
-        refs = [(n, h) for n, h in db.list_refs() if not n.startswith("tag/")]
+        refs = [(n, h) for n, h in db.list_refs()
+                if not n.startswith("tag/") and not n.startswith("checkpoint/")]
         db.close()
         return refs
     existing = db.get_ref(name)
@@ -654,3 +655,102 @@ def diff_chains(hash1: str, hash2: str) -> list[dict]:
                 output_match=False,
             ))
     return results
+
+
+# ------------------------------------------------------------------- re-execution
+
+
+CHECKPOINT_PREFIX = "checkpoint/"
+
+
+def reexec(
+    node_hash: str,
+    executor: Callable[[str, Any], Any],
+    *,
+    ref: str | None = None,
+) -> dict:
+    """Re-execute a first-parent chain and store results as a new chain.
+
+    *executor* is a callable with signature ``(tool, input) -> output``.
+    The new chain is written under a separate ref (default:
+    ``reexec-<hash[:8]>``).  The current branch is **never** advanced.
+
+    Pass ``ref="my-branch"`` to choose the destination ref name.
+
+    Returns ``{"ref": str, "tip": str, "nodes": int}``.
+    """
+    _vd, db = _open()
+    node_hash = _resolve(db, node_hash)
+    chain = db.walk_linear(node_hash)
+    if not chain:
+        db.close()
+        raise VekError(f"node not found: {node_hash}")
+
+    dest_ref = ref or f"reexec-{node_hash[:8]}"
+    if db.get_ref(dest_ref) is not None:
+        db.close()
+        raise VekError(f"ref already exists: {dest_ref}")
+
+    parent = None
+    count = 0
+    for node in reversed(chain):  # root-first
+        stored_input = json.loads(db.get_object(node["input_hash"]) or b"null")
+        reexec_output = executor(node["tool"], stored_input)
+        in_blob = canonical(stored_input)
+        out_blob = canonical(reexec_output)
+        in_hash = hash_blob(in_blob)
+        out_hash = hash_blob(out_blob)
+        db.put_object(in_hash, in_blob)
+        db.put_object(out_hash, out_blob)
+        ts = datetime.now(timezone.utc).isoformat()
+        node_payload = canonical(dict(
+            tool=node["tool"],
+            input_hash=in_hash,
+            output_hash=out_hash,
+            parent_hash=parent,
+            timestamp=ts,
+        ))
+        nh = hash_node(node_payload)
+        db.put_node(nh, node["tool"], in_hash, out_hash, parent, ts)
+        parent = nh
+        count += 1
+
+    db.set_ref(dest_ref, parent)
+    db.close()
+    return {"ref": dest_ref, "tip": parent, "nodes": count}
+
+
+def checkpoint(node_hash: str, label: str) -> str:
+    """Mark a node as a verified checkpoint.
+
+    Creates a ref ``checkpoint/<label>`` pointing at *node_hash*.
+    When used with ``verify()``, callers can skip already-verified
+    prefixes by comparing against the checkpoint position.
+
+    Returns the full checkpoint ref name.
+    """
+    _vd, db = _open()
+    node_hash = _resolve(db, node_hash)
+    node = db.get_node(node_hash)
+    if node is None:
+        db.close()
+        raise VekError(f"node not found: {node_hash}")
+    ref_name = CHECKPOINT_PREFIX + label
+    existing = db.get_ref(ref_name)
+    if existing is not None:
+        db.close()
+        raise VekError(f"checkpoint already exists: {label}")
+    db.set_ref(ref_name, node_hash)
+    db.close()
+    return ref_name
+
+
+def list_checkpoints() -> list[tuple[str, str]]:
+    """List all checkpoints as ``(label, hash)`` pairs."""
+    _vd, db = _open()
+    rows = db._conn.execute(
+        "SELECT name, hash FROM refs WHERE name LIKE ? ORDER BY name",
+        (CHECKPOINT_PREFIX + "%",),
+    ).fetchall()
+    db.close()
+    return [(n.removeprefix(CHECKPOINT_PREFIX), h) for n, h in rows]

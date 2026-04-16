@@ -234,6 +234,32 @@ def cmd_diff_chains(args: argparse.Namespace) -> None:
         print(f"[{r['position']}] {a} vs {b}  in:{in_s} out:{out_s}")
 
 
+def cmd_reexec(args: argparse.Namespace) -> None:
+    if args.exec_function:
+        mod_name, func_name = args.exec_function.rsplit(":", 1)
+        import importlib
+        mod = importlib.import_module(mod_name)
+        executor = getattr(mod, func_name)
+    else:
+        executor = lambda tool, inp: None
+    result = api.reexec(args.hash, executor, ref=args.ref)
+    print(f"Re-executed {result['nodes']} node(s)")
+    print(f"New chain: {result['ref']} -> {_short(result['tip'])}")
+
+
+def cmd_checkpoint(args: argparse.Namespace) -> None:
+    if args.label:
+        ref = api.checkpoint(args.hash, args.label)
+        print(f"Checkpoint '{args.label}' -> {_short(args.hash)}")
+    else:
+        cps = api.list_checkpoints()
+        if not cps:
+            print("(no checkpoints)")
+            return
+        for label, h in cps:
+            print(f"  {label}\t{_short(h)}")
+
+
 def cmd_export(args: argparse.Namespace) -> None:
     result = api.export(branch=args.branch, format=args.format)
     if args.format == "json":
@@ -335,6 +361,15 @@ def main(argv: list[str] | None = None) -> None:
     dc.add_argument("hash1", help="Tip of chain A")
     dc.add_argument("hash2", help="Tip of chain B")
 
+    rx = sub.add_parser("reexec", help="Re-execute chain into new ref")
+    rx.add_argument("hash", help="Tip node hash")
+    rx.add_argument("--exec-function", help="module:function executor")
+    rx.add_argument("--ref", help="Destination ref name")
+
+    cp = sub.add_parser("checkpoint", help="List or create checkpoints")
+    cp.add_argument("label", nargs="?", help="Checkpoint label")
+    cp.add_argument("hash", nargs="?", help="Node hash (required when creating)")
+
     exp = sub.add_parser("export", help="Export execution chains")
     exp.add_argument("--branch", help="Export only this branch")
     exp.add_argument("--format", choices=["json", "jsonl"], default="json")
@@ -368,6 +403,8 @@ def main(argv: list[str] | None = None) -> None:
         "annotate": cmd_annotate,
         "verify": cmd_verify,
         "diff-chains": cmd_diff_chains,
+        "reexec": cmd_reexec,
+        "checkpoint": cmd_checkpoint,
         "export": cmd_export,
         "import": cmd_import,
     }
