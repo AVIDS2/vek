@@ -1,19 +1,28 @@
-# vek
+<div align="center">
+  <img src="docs/vek.png" alt="vek" width="180" />
+  <h1>vek</h1>
+  <p><strong>Git semantics for AI agent tool calls</strong></p>
+  <p>
+    <a href="https://pypi.org/project/vek/"><img src="https://img.shields.io/pypi/v/vek.svg" alt="PyPI" /></a>
+    <a href="https://github.com/AVIDS2/vek/actions/workflows/ci.yml"><img src="https://github.com/AVIDS2/vek/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+    <img src="https://img.shields.io/pypi/pyversions/vek.svg" alt="Python 3.10+" />
+    <img src="https://img.shields.io/pypi/l/vek.svg" alt="AGPL-3.0" />
+  </p>
+</div>
 
-> Content-addressed execution store for AI agents — git semantics for agent tool calls.
+---
 
-[![CI](https://github.com/AVIDS2/vek/actions/workflows/ci.yml/badge.svg)](https://github.com/AVIDS2/vek/actions/workflows/ci.yml)
+Every tool call an agent makes — its input, output, parent, timestamp — is stored as an **immutable, content-addressed blob** in a local SQLite database. The result is a **traceable, forkable, branchable execution DAG** you can query, verify, and replay. Zero external dependencies. Framework-agnostic. One function call to integrate.
 
-Vek is a minimal execution history layer for AI agents. Every tool call's input and output is stored as an immutable, content-addressed blob, forming a traceable, forkable, branchable execution DAG. Framework-agnostic — plug in with a single function call.
+### Why vek?
 
-## Philosophy
-
-**Manage agent execution history like git manages code.**
-Git doesn't care what language you write in. Vek doesn't care what framework your agent runs on.
+- **You can't debug what you can't see.** Agents make thousands of tool calls. Without a record, you're flying blind.
+- **Git proved the model.** Content-addressed, immutable, branchable — the same primitives that make code reviewable make agent execution reviewable.
+- **Local-first, zero config.** `.vek/` in your project directory. No server, no API key, no setup.
 
 ## Install
 
-```
+```bash
 pip install vek
 ```
 
@@ -22,27 +31,53 @@ pip install vek
 ```python
 import vek
 
+# 1. Initialise (once per project)
 vek.init()
 
-# record a single tool call
-h = vek.store(tool="search", input={"q": "climate change"}, output={"results": [...]})
+# 2. Record tool calls
+h = vek.store(tool="search", input={"q": "climate"}, output={"results": [...]})
 
-# session — auto-chained, atomic recording
+# 3. Inspect
+node = vek.show(h)          # full node details
+vek.log()                   # execution history
+vek.status()                # branch, tip, stats
+
+# 4. Branch & fork (like git)
+vek.branch("experiment")    # create/switch branch
+vek.fork(h, "alt-path")     # fork at a node
+
+# 5. Verify & re-execute
+results = vek.verify(h, executor=my_executor)   # dry-run comparison
+new = vek.reexec(h, executor=my_executor)       # re-execute into new ref
+vek.checkpoint(h, "v1-verified")                # mark verified position
+```
+
+### Auto-recording
+
+```python
+# Decorator — wraps any function
+@vek.wrap
+def search(query: str) -> dict:
+    return call_api(query)
+
+# Session — batch recording, atomic
 with vek.session() as s:
     s.store(tool="search", input=query, output=results)
     s.store(tool="summarise", input=text, output=summary)
 
-# auto-record with decorator
-@vek.wrap
-def search(query: str) -> dict:
-    return {"results": [...]}
-
-# inspect
-node = vek.show(h)
-blob = vek.cat_file(node["input_hash"])
+# Hook — intercept a dispatch function
+dispatch = vek.hook(original_dispatch)
 ```
 
-## CLI
+## The Three Pillars
+
+| Pillar | What | API |
+|--------|------|-----|
+| **Store** | Record every tool call immutably | `store`, `session`, `wrap`, `hook` |
+| **Query** | Search, inspect, verify history | `query`, `search`, `annotate`, `verify`, `diff_chains` |
+| **Re-execute** | Replay & checkpoint verified chains | `reexec`, `checkpoint`, `list_checkpoints` |
+
+## CLI Reference
 
 ```
 vek init                  # create .vek/ repository
@@ -110,8 +145,8 @@ All hash arguments accept short prefixes (e.g. `h[:8]`).
 
 ```
 .vek/
-├── objects/     # (reserved) content-addressed hash objects
-├── refs/        # (reserved) branch pointer files
+├── objects/     # content-addressed hash objects
+├── refs/        # branch pointer files
 ├── HEAD         # current branch
 ├── config       # repository configuration
 └── vek.db       # SQLite — objects + nodes + refs
@@ -122,7 +157,7 @@ All hash arguments accept short prefixes (e.g. `h[:8]`).
 ```
 objects:  hash | content
 nodes:    hash | tool | input_hash | output_hash | parent_hash | timestamp | merge_parent
-refs:     name | hash                     (branches, tags with "tag/" prefix)
+refs:     name | hash   (branches, tags with "tag/" prefix, checkpoints with "checkpoint/" prefix)
 ```
 
 ### Object Hashing (git-style)
@@ -138,12 +173,14 @@ Same content stored exactly once. Different types with identical content produce
 
 Merge creates a node with two parents: `parent_hash` (current branch) and `merge_parent` (target branch). Tool is `__merge__`.
 
-## Concurrency
+## Concurrency & Safety
 
 - SQLite WAL mode with 5s busy timeout
 - `store()` uses `BEGIN IMMEDIATE` to serialise concurrent ref updates
 - Advisory file lock (`HEAD.lock`) prevents concurrent branch pointer writes
 - Sessions batch all writes in a single transaction (atomic commit/rollback)
+- `verify()` and `reexec()` suppress executor side-effects via `ContextVar` — executor cannot mutate the repository
+- `reexec()` wraps writes in a transaction — failed re-execution rolls back cleanly, no garbage left behind
 
 ## Design Principles
 
@@ -154,6 +191,7 @@ Merge creates a node with two parents: `parent_hash` (current branch) and `merge
 - **Minimal API** — one function call to integrate
 - **Atomic sessions** — all-or-nothing batch writes
 - **Portable** — export/import execution chains as JSON/JSONL
+- **Safe re-execution** — verify without side-effects, re-execute with rollback
 
 ## License
 
