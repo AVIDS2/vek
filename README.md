@@ -6,7 +6,7 @@
     <a href="https://pypi.org/project/vek/"><img src="https://img.shields.io/pypi/v/vek.svg" alt="PyPI" /></a>
     <a href="https://github.com/AVIDS2/vek/actions/workflows/ci.yml"><img src="https://github.com/AVIDS2/vek/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
     <img src="https://img.shields.io/pypi/pyversions/vek.svg" alt="Python 3.10+" />
-    <img src="https://img.shields.io/pypi/l/vek.svg" alt="AGPL-3.0" />
+    <img src="https://img.shields.io/pypi/l/vek.svg" alt="MIT" />
   </p>
 </div>
 
@@ -195,4 +195,4 @@ Merge creates a node with two parents: `parent_hash` (current branch) and `merge
 
 ## License
 
-[AGPL-3.0](LICENSE)
+[MIT](LICENSE)

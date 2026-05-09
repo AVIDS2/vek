@@ -7,7 +7,7 @@ name = "vek"
 version = "0.5.2"
 description = "Content-addressed execution store for AI agents — git semantics for agent tool calls."
 readme = "README.md"
-license = "AGPL-3.0-only"
+license = "MIT"
 requires-python = ">=3.10"
 authors = [
     { name = "AVIDS2" },
@@ -15,7 +15,7 @@ authors = [
 keywords = ["agent", "git", "content-addressed", "execution-history", "DAG", "tool-call"]
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
